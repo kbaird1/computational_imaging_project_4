@@ -1,0 +1,13 @@
+torch
+torchvision
+torchaudio
+numpy
+scipy
+matplotlib
+scikit-learn
+tqdm
+scikit-image
+optuna
+wandb
+accelerate
+diffusers

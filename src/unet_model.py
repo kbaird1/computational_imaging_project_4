@@ -127,12 +127,15 @@ class UNet(nn.Module):
 def build_unet(**kwargs):
     """
     Build a UNet model instance using configuration parameters.
-    Example:
-        model = build_unet(
-            in_channels=1, out_channels=1, init_features=64,
-            depth=4, activation='ReLU', dropout_rate=0.1,
-            kernel_size=3, padding_mode='zeros', output_activation='Sigmoid'
-        )
+    Automatically filters out unsupported keys (e.g., model_name).
     """
-    model = UNet(**kwargs)
+    valid_keys = {
+        "in_channels", "out_channels", "init_features", "depth",
+        "activation", "batch_norm", "dropout_rate",
+        "kernel_size", "padding_mode", "output_activation"
+    }
+
+    filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_keys}
+    model = UNet(**filtered_kwargs)
     return model
+

@@ -18,7 +18,7 @@ import time
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from torch.cuda.amp import autocast, GradScaler
+from torch import amp
 from src.metrics import compute_metrics
 from src.utils import get_device, ensure_dir_exists, log_message, timer
 import numpy as np
@@ -101,7 +101,7 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device, scaler):
         optimizer.zero_grad(set_to_none=True)
 
         if use_amp:
-            with autocast(dtype=torch.float16):
+            with amp.autocast(device_type=device.type, dtype=torch.float16):
                 preds = model(X_batch)
                 loss = loss_fn(preds, Y_batch)
         else:
@@ -133,7 +133,7 @@ def validate_one_epoch(model, loader, loss_fn, device, epoch, metrics_list):
             X_batch, Y_batch = X_batch.to(device), Y_batch.to(device)
 
             if use_amp:
-                with autocast(dtype=torch.float16):
+                with amp.autocast(device_type=device.type, dtype=torch.float16):
                     preds = model(X_batch)
                     loss = loss_fn(preds, Y_batch)
             else:
@@ -144,8 +144,15 @@ def validate_one_epoch(model, loader, loss_fn, device, epoch, metrics_list):
 
             # Compute selected validation metrics
             batch_metrics = compute_metrics(preds, Y_batch, metrics_list)
-            for k in metrics_list:
-                metric_sums[k] += batch_metrics[k] * X_batch.size(0)
+            # Accumulate metrics safely
+            for k in batch_metrics:
+                val = batch_metrics[k]
+                # Skip metrics that failed or returned strings
+                if isinstance(val, str):
+                    print(f"[validate] Skipping metric {k} with non-numeric value: {val}")
+                    continue
+                metric_sums[k] += float(val) * X_batch.size(0)
+
 
     total = len(loader.dataset)
     avg_metrics = {k: metric_sums[k] / total for k in metrics_list}
@@ -174,7 +181,7 @@ def train_model(model, train_loader, val_loader, config,
     """
     device = get_device()
     model = model.to(device)
-    scaler = GradScaler(enabled=(device.type != "cpu"))
+    scaler = amp.GradScaler(device_type=device.type, enabled=(device.type != "cpu"))
 
     # --- Parse config ---
     train_cfg = config.get("training", {})
@@ -296,7 +303,7 @@ def evaluate_model(model, test_loader, config):
         for X, Y in tqdm(test_loader, desc="[test]", leave=False):
             X, Y = X.to(device), Y.to(device)
             if use_amp:
-                with autocast(dtype=torch.float16):
+                with amp.autocast(device_type=device.type, dtype=torch.float16):
                     preds = model(X)
                     loss = loss_fn(preds, Y)
             else:

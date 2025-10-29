@@ -68,28 +68,18 @@ def baseline_run():
 
     # Log config
     print_config(config, log_path=log_file)
-    log_message(f"[RUN START] Baseline experiment in {run_dir}", log_file)
+    log_message(f"[RUN START] Baseline experiment in {run_dir}", log_file, console=True)
 
     # --- Data loading ---
     mat_path = "./data/Project4_Data.mat"
     train_loader, val_loader, test_loader = create_dataloaders(mat_path, config)
-    log_message("[DATA] Dataloaders created successfully", log_file)
+    log_message("[DATA] Dataloaders created successfully", log_file, console=True)
 
     # --- Model creation ---
     model_cfg = config["model"]
-    model = build_unet(
-        in_channels=model_cfg.get("in_channels", 1),
-        out_channels=model_cfg.get("out_channels", 1),
-        init_features=model_cfg.get("init_features", 64),
-        depth=model_cfg.get("depth", 4),
-        activation=model_cfg.get("activation", "ReLU"),
-        dropout_rate=model_cfg.get("dropout_rate", 0.0),
-        kernel_size=model_cfg.get("kernel_size", 3),
-        padding_mode=model_cfg.get("padding_mode", "zeros"),
-        output_activation=model_cfg.get("output_activation", "Sigmoid"),
-    )
+    model = build_unet(**model_cfg)
     log_message(
-        f"[MODEL] U-Net initialized with {model_cfg['init_features']} base features", log_file
+        f"[MODEL] U-Net initialized with {model_cfg['init_features']} base features", log_file, console=True
     )
 
     # --- Training ---
@@ -104,11 +94,11 @@ def baseline_run():
         save_last_path=ckpt_last,
         resume_path=None,
     )
-    log_message("[TRAINING] Completed baseline training", log_file)
+    log_message("[TRAINING] Completed baseline training", log_file, console=True)
 
     # --- Evaluation ---
     test_metrics = evaluate_model(model, test_loader, config)
-    log_message(f"[TEST] Final metrics: {test_metrics}", log_file)
+    log_message(f"[TEST] Final metrics: {test_metrics}", log_file, console=True)
 
     # --- Generate Report ---
     report_path = os.path.join(run_dir, "training_report.json")
@@ -144,7 +134,7 @@ def baseline_run():
     # Optional comparison placeholder (for multi-model runs)
     # compare_model_metrics({"unet_baseline": test_metrics["psnr"]}, metric="psnr")
 
-    log_message(f"[OUTPUT] All figures and report saved in {run_dir}", log_file)
+    log_message(f"[OUTPUT] All figures and report saved in {run_dir}", log_file, console=True)
     print(f"\n All outputs saved in: {run_dir}")
     print(f"   → Training curves, reconstructions, report.json, checkpoints\n")
 

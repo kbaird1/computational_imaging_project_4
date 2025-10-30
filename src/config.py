@@ -43,18 +43,18 @@ class ModelConfig:
 @dataclass
 class TrainingConfig:
     """Training hyperparameters and runtime options."""
-    epochs: int = 2
+    epochs: int = 50
     batch_size: int = 32
     lr: float = 1e-3
     optimizer: str = "Adam"
     weight_decay: float = 1e-5
-    loss_fn: str = "mse"
+    loss_fn: str = "dssim"
     # Validation metrics computed and logged each epoch
     error_on_validation: List[str] = (
         "mse", "mae", "psnr", "ssim", "dssim",
         "gdl", "tv", "lpips", "ms_ssim"
     )
-    scheduler: str = "None"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
+    scheduler: str = "ReduceLROnPlateau"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
     patience: int = 5
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 42

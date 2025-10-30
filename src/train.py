@@ -16,13 +16,14 @@ Integrates hyperparameters from config.py and supports:
 import os
 import time
 import torch
-import torch.nn as nn
-from tqdm import tqdm
-from torch import amp
-from src.metrics import compute_metrics
-from src.utils import get_device, ensure_dir_exists, log_message, timer
 import numpy as np
 import json
+
+from tqdm import tqdm
+from torch import amp
+from src import metrics
+from src.metrics import compute_metrics
+from src.utils import get_device, ensure_dir_exists, log_message
 
 
 # ============================================================
@@ -41,48 +42,62 @@ def save_checkpoint(model, optimizer, epoch, path, extra=None):
     torch.save(state, path)
 
 
-def load_checkpoint(model, optimizer, path, map_location=None):
+def load_checkpoint(model, optimizer, path, map_location=None, log_file=None):
     """Load a checkpoint and restore model and optimizer state."""
     ckpt = torch.load(path, map_location=map_location or "cpu")
     model.load_state_dict(ckpt["model_state_dict"])
     if optimizer is not None and "optimizer_state_dict" in ckpt:
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-    print(f"[train] Loaded checkpoint from {path} (epoch {ckpt.get('epoch', '?')})")
+    log_message(f"[train] Loaded checkpoint from {path} (epoch {ckpt.get('epoch', '?')})", log_file, console=True)
     return ckpt
 
 
-# ============================================================
-#  Differentiable Loss Functions
-# ============================================================
 def get_loss_function(name):
     """
     Retrieve differentiable loss function by name.
-    Supported: mse, mae, dssim, gdl, tv, lpips, ms_ssim
+
+    All losses are sourced from src.metrics to ensure consistent computation
+    between training, validation, and testing. Non-differentiable metrics are
+    wrapped into torch tensors for safe backward compatibility.
     """
+
     name = name.lower()
+
     if name == "mse":
-        return nn.MSELoss()
+        return lambda y_pred, y_true: torch.tensor(
+            metrics.mean_squared_error(y_true, y_pred), device=y_pred.device, requires_grad=True
+        )
+
     elif name in ["l1", "mae"]:
-        return nn.L1Loss()
+        return lambda y_pred, y_true: torch.tensor(
+            metrics.mean_absolute_error(y_true, y_pred), device=y_pred.device, requires_grad=True
+        )
+
     elif name == "dssim":
-        from piq import SSIMLoss
-        return SSIMLoss(data_range=1.0)
+        return lambda y_pred, y_true: torch.tensor(
+            metrics.dssim(y_true, y_pred), device=y_pred.device, requires_grad=True
+        )
+
     elif name == "gdl":
-        from src.metrics import gradient_difference_loss
-        # wrap non-module function
-        return lambda y_pred, y_true: torch.tensor(gradient_difference_loss(y_true, y_pred), device=y_pred.device)
+        return lambda y_pred, y_true: torch.tensor(
+            metrics.gradient_difference_loss(y_true, y_pred), device=y_pred.device, requires_grad=True
+        )
+
     elif name == "tv":
-        from src.metrics import total_variation
-        return lambda y_pred, y_true: torch.tensor(total_variation(y_pred), device=y_pred.device)
+        return lambda y_pred, y_true: torch.tensor(
+            metrics.total_variation(y_pred), device=y_pred.device, requires_grad=True
+        )
+
     elif name == "lpips":
-        import lpips
-        model = lpips.LPIPS(net="alex").eval()
-        return lambda y_pred, y_true: model(
-            y_pred.repeat(1, 3, 1, 1), y_true.repeat(1, 3, 1, 1)
-        ).mean()
+        return lambda y_pred, y_true: torch.tensor(
+            metrics.lpips_score(y_true, y_pred), device=y_pred.device, requires_grad=True
+        )
+
     elif name == "ms_ssim":
-        from piq import MultiScaleSSIMLoss
-        return MultiScaleSSIMLoss(data_range=1.0)
+        return lambda y_pred, y_true: torch.tensor(
+            metrics.multi_scale_ssim(y_true, y_pred), device=y_pred.device, requires_grad=True
+        )
+
     else:
         raise ValueError(f"Unsupported loss function: {name}")
 
@@ -172,7 +187,8 @@ def validate_one_epoch(model, loader, loss_fn, device, epoch, metrics_list):
 def train_model(model, train_loader, val_loader, config,
                 save_path="results/checkpoints/best_model.pt",
                 save_last_path="results/checkpoints/last_model.pt",
-                resume_path=None):
+                resume_path=None,
+                log_file=None):
     """
     Full training routine integrating metrics, loss functions, and early stopping.
 
@@ -187,7 +203,6 @@ def train_model(model, train_loader, val_loader, config,
     """
     device = get_device()
     model = model.to(device)
-    # scaler = amp.GradScaler(device_type=device.type, enabled=(device.type != "cpu"))
     scaler = amp.GradScaler(enabled=(device.type != "cpu"))
 
     # --- Parse config ---
@@ -222,10 +237,10 @@ def train_model(model, train_loader, val_loader, config,
     start_epoch = 1
     best_val_loss = float("inf")
     if resume_path and os.path.exists(resume_path):
-        ckpt = load_checkpoint(model, optimizer, resume_path, map_location=device)
+        ckpt = load_checkpoint(model, optimizer, resume_path, map_location=device, log_file=log_file)
         start_epoch = ckpt.get("epoch", 1) + 1
         best_val_loss = ckpt.get("best_val_loss", float("inf"))
-        print(f"[train] Resuming from epoch {start_epoch}")
+        log_message(f"[train] Resuming from epoch {start_epoch}", log_file, console=True)
 
     # --- Containers for history ---
     history = {
@@ -237,7 +252,7 @@ def train_model(model, train_loader, val_loader, config,
     }
 
     ensure_dir_exists(os.path.dirname(save_path))
-    print(f"[train] Training for {num_epochs} epochs on {device} (loss={loss_name}).")
+    log_message(f"[train] Training for {num_epochs} epochs on {device} (loss={loss_name}).", log_file, console=True)
 
     # --- Training loop ---
     start_time = time.time()
@@ -261,7 +276,7 @@ def train_model(model, train_loader, val_loader, config,
         # --- Log summary ---
         summary = f"[Epoch {epoch}] Train={train_loss:.5f}, Val={val_loss:.5f}, " + \
                   ", ".join([f"{m.upper()}={metrics[m]:.4f}" for m in metrics_list])
-        print(summary)
+        log_message(summary, log_file, console=True)
 
         # --- Checkpoint saving ---
         save_checkpoint(model, optimizer, epoch, save_last_path,
@@ -271,11 +286,11 @@ def train_model(model, train_loader, val_loader, config,
             epochs_no_improve = 0
             save_checkpoint(model, optimizer, epoch, save_path,
                             extra={"config": config, "history": history, "best_val_loss": best_val_loss})
-            print(f"[train] New best model at epoch {epoch} saved → {save_path}")
+            log_message(f"[train] New best model at epoch {epoch} saved → {save_path}", log_file, console=True)
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= patience:
-                print(f"[train] Early stopping triggered at epoch {epoch}.")
+                log_message(f"[train] Early stopping triggered at epoch {epoch}.", log_file, console=True)
                 break
 
         # --- Scheduler step ---
@@ -288,14 +303,14 @@ def train_model(model, train_loader, val_loader, config,
     total_time = time.time() - start_time
     history["total_time"] = total_time
 
-    print(f"[train] Training complete. Best Val Loss: {best_val_loss:.5f}. Total time: {total_time:.2f}s.")
+    log_message(f"[train] Training complete. Best Val Loss: {best_val_loss:.5f}. Total time: {total_time:.2f}s.", log_file, console=True)
     return model, history
 
 
 # ============================================================
 #  Evaluation & Report
 # ============================================================
-def evaluate_model(model, test_loader, config):
+def evaluate_model(model, test_loader, config, log_file=None):
     """Evaluate final model on test set using same validation metrics."""
     device = get_device()
     model = model.to(device).eval()
@@ -326,16 +341,16 @@ def evaluate_model(model, test_loader, config):
     avg_metrics = {k: metric_sums[k] / n for k in metrics_list}
     avg_metrics["loss"] = total_loss / n
 
-    print("[test] Final Test Metrics:")
+    log_message("[test] Final Test Metrics:", log_file, console=True)
     for k, v in avg_metrics.items():
-        print(f"   {k.upper()}: {v:.4f}")
+        log_message(f"   {k.upper()}: {v:.4f}", log_file, console=True)
     return avg_metrics
 
 
 # ============================================================
 #  Training Report Writer
 # ============================================================
-def generate_training_report(output_path, config, history, test_metrics):
+def generate_training_report(output_path, config, history, test_metrics, log_file=None):
     """
     Write a summary report containing:
         - Model & training configuration
@@ -371,5 +386,5 @@ def generate_training_report(output_path, config, history, test_metrics):
     with open(output_path, "w") as f:
         json.dump(report, f, indent=4)
 
-    print(f"[report] Training report saved → {output_path}")
+    log_message(f"[report] Training report saved → {output_path}", log_file, console=True)
     return report

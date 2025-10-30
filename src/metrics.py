@@ -108,17 +108,28 @@ def structural_similarity_index(y_true, y_pred, data_range=1.0):
 # ============================================================
 def dssim(y_true, y_pred, data_range=1.0):
     """
-    Differentiable DSSIM = (1 - SSIM) / 2, safe for training and mixing with other losses.
-    Automatically clamps and cleans NaN/inf values.
+    Differentiable DSSIM = (1 - SSIM) / 2.
+    Handles NaNs and clamps values to avoid instability.
     """
-    # Clamp predictions and targets into valid range
-    y_true = torch.nan_to_num(y_true, nan=0.0, posinf=1.0, neginf=0.0)
-    y_pred = torch.nan_to_num(y_pred, nan=0.0, posinf=1.0, neginf=0.0)
-    y_true = torch.clamp(y_true, 0.0, 1.0)
-    y_pred = torch.clamp(y_pred, 0.0, 1.0)
+    if not isinstance(y_true, torch.Tensor):
+        y_true = torch.tensor(y_true)
+    if not isinstance(y_pred, torch.Tensor):
+        y_pred = torch.tensor(y_pred)
 
-    ssim_val = structural_similarity_index(y_true, y_pred, data_range=data_range)
-    return (1 - ssim_val) / 2
+    device = y_pred.device
+    y_true = y_true.to(device=device, dtype=torch.float32)
+    y_pred = y_pred.to(device=device, dtype=torch.float32)
+
+    # sanitize
+    y_true = torch.nan_to_num(y_true, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+    y_pred = torch.nan_to_num(y_pred, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+
+    ssim_val = differentiable_ssim(y_pred, y_true, data_range=data_range)
+    if torch.isnan(ssim_val).any() or torch.isinf(ssim_val).any():
+        ssim_val = torch.nan_to_num(ssim_val, nan=0.0, posinf=0.0, neginf=0.0)
+
+    dssim_val = (1 - ssim_val) / 2
+    return dssim_val.mean()
 
 
 def gradient_difference_loss(y_true, y_pred):

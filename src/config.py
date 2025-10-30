@@ -45,7 +45,7 @@ class TrainingConfig:
     """Training hyperparameters and runtime options."""
     epochs: int = 100
     batch_size: int = 32
-    lr: float = 1e-2
+    lr: float = 5e-4
     optimizer: str = "Adam"
     weight_decay: float = 1e-5
     loss_fn: str = "mse:0.8+dssim:0.2"

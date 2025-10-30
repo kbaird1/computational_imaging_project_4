@@ -51,25 +51,27 @@ def load_checkpoint(model, optimizer, path, map_location=None, log_file=None):
     log_message(f"[train] Loaded checkpoint from {path} (epoch {ckpt.get('epoch', '?')})", log_file, console=True)
     return ckpt
 
-
 def get_loss_function(name):
     """
     Retrieve differentiable loss function by name.
+
     Supports both single and composite weighted losses, e.g.:
         "mse"
         "mae"
         "dssim"
-        "mse+dssim"        -> equal weighting
-        "mse:0.8+dssim:0.2" -> weighted combination
+        "mse+dssim"          -> equal weighting (0.5 each)
+        "mse:0.8+dssim:0.2"  -> weighted combination
     """
 
     name = name.lower().strip()
 
-    # Helper: return individual loss
-    def _get_single_loss(single_name):
+    # -----------------------------------------
+    # Helper: retrieve individual loss function
+    # -----------------------------------------
+    def _get_single_loss(single_name: str):
         if single_name == "mse":
             return lambda y_pred, y_true: metrics.mean_squared_error(y_true, y_pred)
-        elif single_name in ["l1", "mae"]:
+        elif single_name in ["mae", "l1"]:
             return lambda y_pred, y_true: metrics.mean_absolute_error(y_true, y_pred)
         elif single_name == "dssim":
             return lambda y_pred, y_true: metrics.dssim(y_true, y_pred)
@@ -80,9 +82,11 @@ def get_loss_function(name):
         elif single_name == "lpips":
             return lambda y_pred, y_true: metrics.lpips_score(y_true, y_pred)
         else:
-            raise ValueError(f"Unsupported loss: {single_name}")
+            raise ValueError(f"[get_loss_function] Unsupported loss function: '{single_name}'")
 
-    # ---- If multiple losses combined ----
+    # --------------------------------------------------------
+    # Case 1: Composite weighted losses, e.g. "mse:0.8+dssim:0.2"
+    # --------------------------------------------------------
     if "+" in name:
         parts = [p.strip() for p in name.split("+")]
         components = []
@@ -90,23 +94,32 @@ def get_loss_function(name):
         for p in parts:
             if ":" in p:
                 lname, weight = p.split(":")
+                lname = lname.strip()
                 weight = float(weight)
             else:
-                lname, weight = p, 1.0  # default equal weighting
-            components.append((_get_single_loss(lname.strip()), weight))
+                lname, weight = p, 1.0  # default equal weighting if no weights provided
+            components.append((_get_single_loss(lname), weight))
 
+        # Normalize weights so they sum to 1
         total_weight = sum(w for _, w in components)
-        norm_components = [(f, w / total_weight) for f, w in components]  # normalize
+        norm_components = [(f, w / total_weight) for f, w in components]
 
+        # Combined differentiable loss
         def combined_loss(y_pred, y_true):
-            total = 0.0
+            total = torch.tensor(0.0, device=y_pred.device)
             for f, w in norm_components:
-                total += w * f(y_pred, y_true)
+                loss_val = f(y_pred, y_true)
+                if isinstance(loss_val, torch.Tensor):
+                    total += w * loss_val
+                else:
+                    total += w * torch.tensor(loss_val, device=y_pred.device)
             return total
 
         return combined_loss
 
-    # ---- Single loss ----
+    # --------------------------------------------------------
+    # Case 2: Single loss only
+    # --------------------------------------------------------
     else:
         return _get_single_loss(name)
 

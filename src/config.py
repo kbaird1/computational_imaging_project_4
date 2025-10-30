@@ -31,11 +31,11 @@ class ModelConfig:
     in_channels: int = 1
     out_channels: int = 1
     init_features: int = 64
-    depth: int = 4
-    activation: str = "ReLU"
+    depth: int = 5
+    activation: str = "LeakyReLU"
     batch_norm: bool = True
-    dropout_rate: float = 0.0
-    kernel_size: int = 3
+    dropout_rate: float = 0.15
+    kernel_size: int = 6
     output_activation: str = "Sigmoid"
     padding_mode: str = "zeros"
 
@@ -48,14 +48,14 @@ class TrainingConfig:
     lr: float = 1e-3
     optimizer: str = "Adam"
     weight_decay: float = 1e-5
-    loss_fn: str = "dssim"
+    loss_fn: str = "tv"
     # Validation metrics computed and logged each epoch
     error_on_validation: List[str] = (
         "mse", "mae", "psnr", "ssim", 
         "dssim", "gdl", "tv", "lpips"
     )
     scheduler: str = "ReduceLROnPlateau"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
-    patience: int = 5
+    patience: int = None
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 42
     save_path: str = "results/checkpoints/unet_baseline.pt"

@@ -43,7 +43,7 @@ class ModelConfig:
 @dataclass
 class TrainingConfig:
     """Training hyperparameters and runtime options."""
-    epochs: int = 100
+    epochs: int = 20
     batch_size: int = 32
     lr: float = 1e-3
     optimizer: str = "Adam"

@@ -55,7 +55,7 @@ class TrainingConfig:
         "dssim", "gdl", "tv", "lpips"
     )
     scheduler: str = "ReduceLROnPlateau"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
-    patience: int = 0
+    patience: int = 1000
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 42
     save_path: str = "results/checkpoints/unet_baseline.pt"

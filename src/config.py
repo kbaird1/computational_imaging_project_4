@@ -51,8 +51,8 @@ class TrainingConfig:
     loss_fn: str = "dssim"
     # Validation metrics computed and logged each epoch
     error_on_validation: List[str] = (
-        "mse", "mae", "psnr", "ssim", "dssim",
-        "gdl", "tv", "lpips", "ms_ssim"
+        "mse", "mae", "psnr", "ssim", 
+        "dssim", "gdl", "tv", "lpips"
     )
     scheduler: str = "ReduceLROnPlateau"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
     patience: int = 5
@@ -152,11 +152,11 @@ SEARCH_SPACES = {
         "optimizer": ["Adam", "AdamW", "RMSprop"],
         "weight_decay": [0.0, 1e-6, 1e-5, 1e-4],
         # All differentiable losses supported in metrics.py
-        "loss_fn": ["mse", "mae", "dssim", "gdl", "tv", "lpips", "ms_ssim"],
+        "loss_fn": ["mse", "mae", "dssim", "gdl", "tv", "lpips"],
         # Validation metrics (computed at epoch end)
         "error_on_validation": [
-            "mse", "mae", "psnr", "ssim", "dssim",
-            "gdl", "tv", "lpips", "ms_ssim",
+            "mse", "mae", "psnr", "ssim", 
+            "dssim", "gdl", "tv", "lpips",
         ],
         "scheduler": ["None", "ReduceLROnPlateau", "CosineAnnealingLR"],
         "patience": [5, 10],

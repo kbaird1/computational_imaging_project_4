@@ -18,8 +18,6 @@ import torch
 import numpy as np
 import lpips
 from piq import ssim as differentiable_ssim
-from piq import multi_scale_ssim as differentiable_ms_ssim
-from skimage.metrics import structural_similarity as ssim_fn
 
 # Preload LPIPS model (for speed)
 _lpips_model = lpips.LPIPS(net="alex").eval()
@@ -80,21 +78,34 @@ def peak_signal_to_noise_ratio(y_true, y_pred, data_range=1.0):
         return float("inf")
     return float(20 * np.log10(data_range) - 10 * np.log10(mse_val))
 
+def structural_similarity_index(y_true, y_pred, data_range=1.0):
+    """
+    Differentiable SSIM using PIQ (AMP-safe).
+    Forces float32 precision to avoid half<->float mismatches under autocast.
+    """
+    if not isinstance(y_true, torch.Tensor):
+        y_true = torch.tensor(y_true)
+    if not isinstance(y_pred, torch.Tensor):
+        y_pred = torch.tensor(y_pred)
 
-def structural_similarity_index(y_true, y_pred):
-    """Differentiable SSIM using PIQ."""
-    y_true = _to_tensor(y_true)
-    y_pred = _to_tensor(y_pred)
-    return differentiable_ssim(y_pred, y_true, data_range=1.0)
+    device = y_pred.device
+    # always cast to float32 so mixed-precision AMP won't break
+    y_true = y_true.to(device=device, dtype=torch.float32)
+    y_pred = y_pred.to(device=device, dtype=torch.float32)
+
+    val = differentiable_ssim(y_pred, y_true, data_range=data_range)
+    return val.mean()  # keep as differentiable scalar
 
 
 # ============================================================
 # Advanced Metrics (Differentiable)
 # ============================================================
-def dssim(y_true, y_pred):
-    """Dissimilarity form of SSIM (1 - SSIM) / 2."""
-    return 0.5 * (1 - structural_similarity_index(y_true, y_pred))
-
+def dssim(y_true, y_pred, data_range=1.0):
+    """
+    Differentiable DSSIM = (1 - SSIM) / 2
+    """
+    ssim_val = structural_similarity_index(y_true, y_pred, data_range=data_range)
+    return (1.0 - ssim_val) / 2.0
 
 def gradient_difference_loss(y_true, y_pred):
     """Gradient Difference Loss (edge preservation)."""
@@ -135,13 +146,6 @@ def lpips_score(y_true, y_pred, device=None):
     return _lpips_model(y_true, y_pred).mean()
 
 
-def multi_scale_ssim(y_true, y_pred):
-    """Differentiable Multi-Scale SSIM (PIQ)."""
-    y_true = _to_tensor(y_true)
-    y_pred = _to_tensor(y_pred)
-    return differentiable_ms_ssim(y_pred, y_true, data_range=1.0)
-
-
 # ============================================================
 # Unified Metric Interface
 # ============================================================
@@ -159,7 +163,6 @@ def compute_metrics(y_pred, y_true, metrics_list=None, as_float=False):
         "gdl": gradient_difference_loss,
         "tv": total_variation,
         "lpips": lpips_score,
-        "ms_ssim": multi_scale_ssim,
     }
 
     if metrics_list is None:
@@ -209,7 +212,6 @@ if __name__ == "__main__":
         ("DSSIM", dssim),
         ("GDL", gradient_difference_loss),
         ("TV", total_variation),
-        ("MS-SSIM", multi_scale_ssim),
     ]:
         y_pred = y_true.clone().requires_grad_(True)
         try:

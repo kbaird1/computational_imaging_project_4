@@ -31,11 +31,11 @@ class ModelConfig:
     in_channels: int = 1
     out_channels: int = 1
     init_features: int = 64
-    depth: int = 5
+    depth: int = 4
     activation: str = "LeakyReLU"
     batch_norm: bool = True
     dropout_rate: float = 0.15
-    kernel_size: int = 6
+    kernel_size: int = 3
     output_activation: str = "Sigmoid"
     padding_mode: str = "zeros"
 
@@ -43,12 +43,12 @@ class ModelConfig:
 @dataclass
 class TrainingConfig:
     """Training hyperparameters and runtime options."""
-    epochs: int = 50
+    epochs: int = 100
     batch_size: int = 32
     lr: float = 1e-3
     optimizer: str = "Adam"
     weight_decay: float = 1e-5
-    loss_fn: str = "tv"
+    loss_fn: str = "mse"
     # Validation metrics computed and logged each epoch
     error_on_validation: List[str] = (
         "mse", "mae", "psnr", "ssim", 
@@ -152,7 +152,7 @@ SEARCH_SPACES = {
         "optimizer": ["Adam", "AdamW", "RMSprop"],
         "weight_decay": [0.0, 1e-6, 1e-5, 1e-4],
         # All differentiable losses supported in metrics.py
-        "loss_fn": ["mse", "mae", "dssim", "gdl", "tv", "lpips"],
+        "loss_fn": ["mse", "mae"],
         # Validation metrics (computed at epoch end)
         "error_on_validation": [
             "mse", "mae", "psnr", "ssim", 

@@ -31,7 +31,7 @@ class ModelConfig:
     in_channels: int = 1
     out_channels: int = 1
     init_features: int = 64
-    depth: int = 4
+    depth: int = 5
     activation: str = "ReLU"
     batch_norm: bool = True
     dropout_rate: float = 0.15
@@ -45,10 +45,10 @@ class TrainingConfig:
     """Training hyperparameters and runtime options."""
     epochs: int = 100
     batch_size: int = 32
-    lr: float = 5e-4
+    lr: float = 1e-4
     optimizer: str = "Adam"
     weight_decay: float = 1e-5
-    loss_fn: str = "mse:0.8+dssim:0.2"
+    loss_fn: str = "mse:0.9+dssim:0.1"
     # Validation metrics computed and logged each epoch
     error_on_validation: List[str] = (
         "mse", "ssim", "dssim"

@@ -32,9 +32,9 @@ class ModelConfig:
     out_channels: int = 1
     init_features: int = 64
     depth: int = 5
-    activation: str = "ReLU"
+    activation: str = "LeakyReLU"
     batch_norm: bool = True
-    dropout_rate: float = 0.15
+    dropout_rate: float = 0.1
     kernel_size: int = 3
     output_activation: str = "Sigmoid"
     padding_mode: str = "zeros"
@@ -45,15 +45,15 @@ class TrainingConfig:
     """Training hyperparameters and runtime options."""
     epochs: int = 100
     batch_size: int = 32
-    lr: float = 1e-4
+    lr: float = 5e-3
     optimizer: str = "Adam"
     weight_decay: float = 1e-5
-    loss_fn: str = "mse:0.9+dssim:0.1"
+    loss_fn: str = "mse"
     # Validation metrics computed and logged each epoch
     error_on_validation: List[str] = (
-        "mse", "ssim", "dssim"
+        "mse", "ssim"
     )
-    scheduler: str = "None"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
+    scheduler: str = "ReduceLROnPlateau"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
     patience: int = 1000
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 42
@@ -96,7 +96,7 @@ SEARCH_SPACES = {
         "optimizer": ["Adam", "AdamW", "RMSprop"],
         "weight_decay": [0.0, 1e-6, 1e-5, 1e-4],
         # All differentiable losses supported in metrics.py
-        "loss_fn": ["mse", "mae"],
+        "loss_fn": ["mse", "mae", "mse:0.9+dssim:0.1"],
         # Validation metrics (computed at epoch end)
         "error_on_validation": [
             "mse", "mae", "psnr", "ssim", 

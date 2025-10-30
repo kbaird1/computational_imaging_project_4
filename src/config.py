@@ -32,7 +32,7 @@ class ModelConfig:
     out_channels: int = 1
     init_features: int = 64
     depth: int = 4
-    activation: str = "LeakyReLU"
+    activation: str = "ReLU"
     batch_norm: bool = True
     dropout_rate: float = 0.15
     kernel_size: int = 3
@@ -43,18 +43,17 @@ class ModelConfig:
 @dataclass
 class TrainingConfig:
     """Training hyperparameters and runtime options."""
-    epochs: int = 20
+    epochs: int = 100
     batch_size: int = 32
-    lr: float = 1e-3
+    lr: float = 1e-2
     optimizer: str = "Adam"
     weight_decay: float = 1e-5
-    loss_fn: str = "mse"
+    loss_fn: str = "mse:0.8+dssim:0.2"
     # Validation metrics computed and logged each epoch
     error_on_validation: List[str] = (
-        "mse", "mae", "psnr", "ssim", 
-        "dssim", "gdl", "tv", "lpips"
+        "mse", "ssim", "dssim"
     )
-    scheduler: str = "ReduceLROnPlateau"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
+    scheduler: str = "None"  # "None", "ReduceLROnPlateau", "CosineAnnealingLR"
     patience: int = 1000
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 42
@@ -73,62 +72,7 @@ BASELINE_CONFIGS: Dict[str, Dict[str, Any]] = {
     "unet_baseline": {
         "model": ModelConfig(),
         "training": TrainingConfig(),
-    },
-
-    # ---- Larger capacity model (more depth/features, slower but higher fidelity) ----
-    "unet_large": {
-        "model": ModelConfig(init_features=128, depth=5, dropout_rate=0.1),
-        "training": TrainingConfig(
-            lr=5e-4, batch_size=16, epochs=100, seed=42, loss_fn="mse"
-        ),
-    },
-
-    # ---- Smaller and faster model (lightweight for debugging / small datasets) ----
-    "unet_small": {
-        "model": ModelConfig(init_features=32, depth=3),
-        "training": TrainingConfig(
-            lr=2e-3, batch_size=64, epochs=30, seed=42, loss_fn="mae"
-        ),
-    },
-
-    # ---- Perceptual configuration (for high-quality reconstruction) ----
-    "unet_perceptual": {
-        "model": ModelConfig(init_features=64, depth=4, dropout_rate=0.05),
-        "training": TrainingConfig(
-            lr=1e-4,
-            batch_size=8,
-            epochs=100,
-            loss_fn="lpips",
-            scheduler="ReduceLROnPlateau",
-            seed=77,
-        ),
-    },
-
-    # ---- Structure-aware configuration (for edge/detail preservation) ----
-    "unet_structural": {
-        "model": ModelConfig(init_features=64, depth=4, activation="LeakyReLU"),
-        "training": TrainingConfig(
-            lr=1e-3,
-            batch_size=16,
-            epochs=100,
-            loss_fn="dssim",
-            scheduler="CosineAnnealingLR",
-            seed=99,
-        ),
-    },
-
-    # ---- Smooth regularized model (for denoising with total variation loss) ----
-    "unet_smooth": {
-        "model": ModelConfig(init_features=64, depth=3, dropout_rate=0.1),
-        "training": TrainingConfig(
-            lr=1e-3,
-            batch_size=32,
-            epochs=80,
-            loss_fn="tv",
-            scheduler="ReduceLROnPlateau",
-            seed=21,
-        ),
-    },
+    }
 }
 
 

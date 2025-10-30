@@ -55,37 +55,60 @@ def load_checkpoint(model, optimizer, path, map_location=None, log_file=None):
 def get_loss_function(name):
     """
     Retrieve differentiable loss function by name.
-
-    All losses are sourced from src.metrics to ensure consistent computation
-    between training, validation, and testing. Each loss is fully differentiable.
+    Supports both single and composite weighted losses, e.g.:
+        "mse"
+        "mae"
+        "dssim"
+        "mse+dssim"        -> equal weighting
+        "mse:0.8+dssim:0.2" -> weighted combination
     """
 
-    name = name.lower()
+    name = name.lower().strip()
 
-    if name == "mse":
-        return lambda y_pred, y_true: metrics.mean_squared_error(y_true, y_pred)
+    # Helper: return individual loss
+    def _get_single_loss(single_name):
+        if single_name == "mse":
+            return lambda y_pred, y_true: metrics.mean_squared_error(y_true, y_pred)
+        elif single_name in ["l1", "mae"]:
+            return lambda y_pred, y_true: metrics.mean_absolute_error(y_true, y_pred)
+        elif single_name == "dssim":
+            return lambda y_pred, y_true: metrics.dssim(y_true, y_pred)
+        elif single_name == "gdl":
+            return lambda y_pred, y_true: metrics.gradient_difference_loss(y_true, y_pred)
+        elif single_name == "tv":
+            return lambda y_pred, y_true: metrics.total_variation(y_pred)
+        elif single_name == "lpips":
+            return lambda y_pred, y_true: metrics.lpips_score(y_true, y_pred)
+        else:
+            raise ValueError(f"Unsupported loss: {single_name}")
 
-    elif name in ["l1", "mae"]:
-        return lambda y_pred, y_true: metrics.mean_absolute_error(y_true, y_pred)
+    # ---- If multiple losses combined ----
+    if "+" in name:
+        parts = [p.strip() for p in name.split("+")]
+        components = []
 
-    elif name == "dssim":
-        return lambda y_pred, y_true: metrics.dssim(y_true, y_pred)
+        for p in parts:
+            if ":" in p:
+                lname, weight = p.split(":")
+                weight = float(weight)
+            else:
+                lname, weight = p, 1.0  # default equal weighting
+            components.append((_get_single_loss(lname.strip()), weight))
 
-    elif name == "gdl":
-        return lambda y_pred, y_true: metrics.gradient_difference_loss(y_true, y_pred)
+        total_weight = sum(w for _, w in components)
+        norm_components = [(f, w / total_weight) for f, w in components]  # normalize
 
-    elif name == "tv":
-        return lambda y_pred, y_true: metrics.total_variation(y_pred)
+        def combined_loss(y_pred, y_true):
+            total = 0.0
+            for f, w in norm_components:
+                total += w * f(y_pred, y_true)
+            return total
 
-    elif name == "lpips":
-        return lambda y_pred, y_true: metrics.lpips_score(y_true, y_pred)
+        return combined_loss
 
-    elif name == "ms_ssim":
-        return lambda y_pred, y_true: metrics.multi_scale_ssim(y_true, y_pred)
-
+    # ---- Single loss ----
     else:
-        raise ValueError(f"Unsupported loss function: {name}")
-
+        return _get_single_loss(name)
 
 # ============================================================
 #  One Epoch of Training / Validation

@@ -122,15 +122,18 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device, scaler):
 
 
 def validate_one_epoch(model, loader, loss_fn, device, epoch, metrics_list):
-    """Validate model and compute all selected metrics."""
+    """Validate model and compute all selected metrics individually (not averaged together)."""
     model.eval()
     val_loss = 0.0
     metric_sums = {m: 0.0 for m in metrics_list}
+    total_samples = 0
     use_amp = device.type == "cuda"
 
     with torch.no_grad():
         for X_batch, Y_batch in tqdm(loader, desc=f"[val] Epoch {epoch}", leave=False):
             X_batch, Y_batch = X_batch.to(device), Y_batch.to(device)
+            batch_size = X_batch.size(0)
+            total_samples += batch_size
 
             if use_amp:
                 with amp.autocast(device_type=device.type, dtype=torch.float16):
@@ -140,23 +143,26 @@ def validate_one_epoch(model, loader, loss_fn, device, epoch, metrics_list):
                 preds = model(X_batch)
                 loss = loss_fn(preds, Y_batch)
 
-            val_loss += loss.item() * X_batch.size(0)
+            val_loss += loss.item() * batch_size
 
-            # Compute selected validation metrics
+            # Compute selected validation metrics for this batch
             batch_metrics = compute_metrics(preds, Y_batch, metrics_list)
-            # Accumulate metrics safely
-            for k in batch_metrics:
-                val = batch_metrics[k]
-                # Skip metrics that failed or returned strings
-                if isinstance(val, str):
+
+            # Safely accumulate each metric individually
+            for k, val in batch_metrics.items():
+                if val is None or isinstance(val, str):
                     print(f"[validate] Skipping metric {k} with non-numeric value: {val}")
                     continue
-                metric_sums[k] += float(val) * X_batch.size(0)
+                try:
+                    metric_sums[k] += float(val) * batch_size
+                except (TypeError, ValueError):
+                    print(f"[validate] Warning: could not convert metric {k} value: {val}")
+                    continue
 
+    # Average loss and each metric across the entire validation set
+    avg_loss = val_loss / total_samples
+    avg_metrics = {k: metric_sums[k] / total_samples for k in metric_sums}
 
-    total = len(loader.dataset)
-    avg_metrics = {k: metric_sums[k] / total for k in metrics_list}
-    avg_loss = val_loss / total
     return avg_loss, avg_metrics
 
 
@@ -181,7 +187,8 @@ def train_model(model, train_loader, val_loader, config,
     """
     device = get_device()
     model = model.to(device)
-    scaler = amp.GradScaler(device_type=device.type, enabled=(device.type != "cpu"))
+    # scaler = amp.GradScaler(device_type=device.type, enabled=(device.type != "cpu"))
+    scaler = amp.GradScaler(enabled=(device.type != "cpu"))
 
     # --- Parse config ---
     train_cfg = config.get("training", {})
@@ -264,7 +271,7 @@ def train_model(model, train_loader, val_loader, config,
             epochs_no_improve = 0
             save_checkpoint(model, optimizer, epoch, save_path,
                             extra={"config": config, "history": history, "best_val_loss": best_val_loss})
-            print(f"[train] ✅ New best model at epoch {epoch} saved → {save_path}")
+            print(f"[train] New best model at epoch {epoch} saved → {save_path}")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= patience:

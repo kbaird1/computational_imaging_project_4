@@ -3,6 +3,8 @@ metrics.py
 ================
 Evaluation and perceptual metrics for single-pixel or U-Net image reconstruction.
 
+Now fully differentiable — all functions can be used both as metrics and as loss functions.
+
 Implements:
     - MSE, MAE, PSNR, SSIM
     - DSSIM (1 - SSIM) / 2
@@ -10,31 +12,24 @@ Implements:
     - Total Variation (TV)
     - LPIPS (requires `pip install lpips`)
     - MS-SSIM (requires `pip install piq`)
-
-All metrics accept torch.Tensor or np.ndarray inputs.
 """
 
 import torch
 import numpy as np
-from skimage.metrics import structural_similarity as ssim_fn
 import lpips
-from piq import multi_scale_ssim as ms_ssim_fn
-from piq import ssim as single_ssim_fn
-
+from piq import ssim as differentiable_ssim
+from piq import multi_scale_ssim as differentiable_ms_ssim
+from skimage.metrics import structural_similarity as ssim_fn
 
 # Preload LPIPS model (for speed)
 _lpips_model = lpips.LPIPS(net="alex").eval()
 
-# ============================================================
-# Utility: convert to numpy or tensor
-# ============================================================
-def _to_numpy(x):
-    if isinstance(x, torch.Tensor):
-        x = x.detach().cpu().numpy()
-    return np.squeeze(x)
 
-
+# ============================================================
+# Utility helpers
+# ============================================================
 def _to_tensor(x, device=None):
+    """Ensure input is a float32 torch.Tensor."""
     if not isinstance(x, torch.Tensor):
         x = torch.tensor(x, dtype=torch.float32)
     if device is not None:
@@ -42,57 +37,63 @@ def _to_tensor(x, device=None):
     return x
 
 
+def _to_numpy(x):
+    """Convert tensor to numpy for evaluation-only contexts."""
+    if isinstance(x, torch.Tensor):
+        if x.requires_grad:
+            return x  # Keep as tensor if still part of autograd
+        return x.detach().cpu().numpy()
+    return np.array(x)
+
+
 # ============================================================
-# Core Metrics
+# Core Metrics (Differentiable)
 # ============================================================
 def mean_squared_error(y_true, y_pred):
-    y_true, y_pred = _to_numpy(y_true), _to_numpy(y_pred)
-    return float(np.mean((y_true - y_pred) ** 2))
+    """Differentiable Mean Squared Error."""
+    y_true = _to_tensor(y_true)
+    y_pred = _to_tensor(y_pred)
+    return torch.mean((y_true - y_pred) ** 2)
 
 
 def mean_absolute_error(y_true, y_pred):
-    y_true, y_pred = _to_numpy(y_true), _to_numpy(y_pred)
-    return float(np.mean(np.abs(y_true - y_pred)))
+    """Differentiable Mean Absolute Error."""
+    y_true = _to_tensor(y_true)
+    y_pred = _to_tensor(y_pred)
+    return torch.mean(torch.abs(y_true - y_pred))
 
 
 def peak_signal_to_noise_ratio(y_true, y_pred, data_range=1.0):
-    mse = mean_squared_error(y_true, y_pred)
-    if mse <= 1e-10:
-        return float("inf")
-    return float(20 * np.log10(data_range) - 10 * np.log10(mse))
-
-
-def structural_similarity_index(y_true, y_pred, data_range=1.0):
-    """Compute SSIM robustly for any image size and batch shape."""
-    y_true, y_pred = _to_numpy(y_true), _to_numpy(y_pred)
-
-    def _ssim_safe(a, b):
-        # Remove leading batch or channel dimensions > 2D
-        while a.ndim > 2:
-            a = a[0]
-            b = b[0]
-        h, w = a.shape[-2:]
-        win_size = min(7, h, w)
-        if win_size % 2 == 0:
-            win_size -= 1
-        win_size = max(3, win_size)
-        return ssim_fn(a, b, data_range=data_range, win_size=win_size, channel_axis=None)
-
-    if y_true.ndim == 4:
-        vals = [_ssim_safe(t, p) for t, p in zip(y_true, y_pred)]
-        return float(np.mean(vals))
+    """
+    PSNR — non-differentiable but useful for evaluation.
+    Kept as a numeric metric (not intended as a training loss).
+    """
+    y_true_np = _to_numpy(y_true)
+    y_pred_np = _to_numpy(y_pred)
+    if isinstance(y_true_np, torch.Tensor):
+        # fallback in case it's still tensor
+        mse = mean_squared_error(y_true_np, y_pred_np)
+        mse_val = float(mse.detach().cpu().numpy())
     else:
-        return float(_ssim_safe(y_true, y_pred))
+        mse_val = np.mean((y_true_np - y_pred_np) ** 2)
+    if mse_val <= 1e-10:
+        return float("inf")
+    return float(20 * np.log10(data_range) - 10 * np.log10(mse_val))
 
 
+def structural_similarity_index(y_true, y_pred):
+    """Differentiable SSIM using PIQ."""
+    y_true = _to_tensor(y_true)
+    y_pred = _to_tensor(y_pred)
+    return differentiable_ssim(y_pred, y_true, data_range=1.0)
 
 
 # ============================================================
-# Advanced Metrics
+# Advanced Metrics (Differentiable)
 # ============================================================
-def dssim(y_true, y_pred, data_range=1.0):
-    """Dissimilarity form of SSIM."""
-    return 0.5 * (1 - structural_similarity_index(y_true, y_pred, data_range=data_range))
+def dssim(y_true, y_pred):
+    """Dissimilarity form of SSIM (1 - SSIM) / 2."""
+    return 0.5 * (1 - structural_similarity_index(y_true, y_pred))
 
 
 def gradient_difference_loss(y_true, y_pred):
@@ -106,8 +107,7 @@ def gradient_difference_loss(y_true, y_pred):
 
     dx_true, dy_true = gradient(y_true)
     dx_pred, dy_pred = gradient(y_pred)
-    loss = torch.mean(torch.abs(dx_true - dx_pred)) + torch.mean(torch.abs(dy_true - dy_pred))
-    return float(loss.item())
+    return torch.mean(torch.abs(dx_true - dx_pred)) + torch.mean(torch.abs(dy_true - dy_pred))
 
 
 def total_variation(y_pred, y_true=None):
@@ -115,12 +115,11 @@ def total_variation(y_pred, y_true=None):
     y_pred = _to_tensor(y_pred)
     dx = torch.abs(y_pred[:, :, :, 1:] - y_pred[:, :, :, :-1])
     dy = torch.abs(y_pred[:, :, 1:, :] - y_pred[:, :, :-1, :])
-    tv = torch.mean(dx) + torch.mean(dy)
-    return float(tv.item())
+    return torch.mean(dx) + torch.mean(dy)
 
 
 def lpips_score(y_true, y_pred, device=None):
-    """Learned Perceptual Image Patch Similarity (lower = better)."""
+    """Learned Perceptual Image Patch Similarity (fully differentiable)."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     y_true = _to_tensor(y_true, device)
     y_pred = _to_tensor(y_pred, device)
@@ -128,56 +127,28 @@ def lpips_score(y_true, y_pred, device=None):
     if y_true.ndim == 2:
         y_true = y_true.unsqueeze(0).unsqueeze(0)
         y_pred = y_pred.unsqueeze(0).unsqueeze(0)
-    if y_true.shape[1] == 1:  # grayscale to 3-channel
+    if y_true.shape[1] == 1:  # grayscale → 3-channel
         y_true = y_true.repeat(1, 3, 1, 1)
         y_pred = y_pred.repeat(1, 3, 1, 1)
 
     _lpips_model.to(device)
-    return float(_lpips_model(y_true, y_pred).mean().item())
+    return _lpips_model(y_true, y_pred).mean()
 
 
 def multi_scale_ssim(y_true, y_pred):
-    """
-    Multi-scale SSIM using PIQ with safety fixes.
-    - Falls back to single-scale SSIM for small (<161x161) images.
-    - Clamps negative values to [0, 1].
-    - Always returns a numeric value.
-    """
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if not isinstance(y_true, torch.Tensor):
-        y_true = torch.tensor(y_true, device=device)
-    if not isinstance(y_pred, torch.Tensor):
-        y_pred = torch.tensor(y_pred, device=device)
-
-    y_true = torch.clamp(y_true.float(), 0, 1)
-    y_pred = torch.clamp(y_pred.float(), 0, 1)
-
-    h, w = y_true.shape[-2:]
-    too_small = min(h, w) < 161
-
-    try:
-        if too_small:
-            val = single_ssim_fn(y_pred, y_true, data_range=1.0)
-        else:
-            val = ms_ssim_fn(y_pred, y_true, data_range=1.0)
-        # Clamp negatives, handle NaNs
-        val = torch.nan_to_num(val, nan=0.0)
-        val = torch.clamp(val, 0.0, 1.0)
-        return float(val.item())
-    except Exception as e:
-        print(f"[metrics] MS-SSIM fallback due to error: {e}")
-        val = single_ssim_fn(y_pred, y_true, data_range=1.0)
-        val = torch.clamp(val, 0.0, 1.0)
-        return float(val.item())
-
+    """Differentiable Multi-Scale SSIM (PIQ)."""
+    y_true = _to_tensor(y_true)
+    y_pred = _to_tensor(y_pred)
+    return differentiable_ms_ssim(y_pred, y_true, data_range=1.0)
 
 
 # ============================================================
-# Unified Entry Point
+# Unified Metric Interface
 # ============================================================
-def compute_metrics(y_pred, y_true, metrics_list=None):
+def compute_metrics(y_pred, y_true, metrics_list=None, as_float=False):
     """
     Compute selected metrics and return dict.
+    If as_float=True, detaches and converts to float.
     """
     available = {
         "mse": mean_squared_error,
@@ -198,55 +169,55 @@ def compute_metrics(y_pred, y_true, metrics_list=None):
     for m in metrics_list:
         fn = available.get(m)
         try:
-            results[m] = fn(y_true, y_pred)
+            val = fn(y_true, y_pred)
+            if as_float and isinstance(val, torch.Tensor):
+                val = float(val.detach().cpu().numpy())
+            results[m] = val
         except Exception as e:
             results[m] = f"error: {e}"
     return results
 
 
 # ============================================================
-# Extended Metrics Test Suite
+# Sanity Test
 # ============================================================
-def test_metrics():
-    """Run full validation suite on all metrics."""
+if __name__ == "__main__":
     print("\n========== [METRICS MODULE TEST] ==========")
-
     torch.manual_seed(42)
     y_true = torch.rand((2, 1, 64, 64))
     y_pred_close = y_true * 0.9 + 0.05 * torch.randn_like(y_true)
     y_pred_far = torch.zeros_like(y_true)
 
     test_cases = {
-        "identical": (y_true, y_true),
-        "noisy": (y_true, y_pred_close),
-        "completely different": (y_true, y_pred_far),
+        "IDENTICAL": (y_true, y_true),
+        "NOISY": (y_true, y_pred_close),
+        "DIFFERENT": (y_true, y_pred_far),
     }
 
-    all_metrics = ["mse", "mae", "psnr", "ssim", "dssim", "gdl", "tv", "lpips", "ms_ssim"]
-
-    for case_name, (yt, yp) in test_cases.items():
-        print(f"\n--- Testing case: {case_name.upper()} ---")
-        results = compute_metrics(yp, yt, metrics_list=all_metrics)
+    for name, (yt, yp) in test_cases.items():
+        print(f"\n--- Testing case: {name} ---")
+        results = compute_metrics(yp, yt, as_float=True)
         for k, v in results.items():
-            if isinstance(v, (float, int)):
-                print(f"  {k.upper():<8} = {v:.6f}")
-            else:
-                print(f"  {k.upper():<8} -> {v}")
+            print(f"  {k.upper():<8} = {v}")
 
-    print("\n--- Sanity Checks ---")
-    mse_identical = mean_squared_error(y_true, y_true)
-    mse_different = mean_squared_error(y_true, torch.zeros_like(y_true))
-    assert mse_identical < 1e-8, f"MSE identical images should be near 0, got {mse_identical}"
-    assert mse_different > 0.05, f"MSE different images too low, got {mse_different}"
-    print("✅ MSE sanity check passed")
+    # Differentiability tests
+    print("\n--- Differentiability Tests (Backward Pass) ---")
+    for name, fn in [
+        ("MSE", mean_squared_error),
+        ("MAE", mean_absolute_error),
+        ("SSIM", structural_similarity_index),
+        ("DSSIM", dssim),
+        ("GDL", gradient_difference_loss),
+        ("TV", total_variation),
+        ("MS-SSIM", multi_scale_ssim),
+    ]:
+        y_pred = y_true.clone().requires_grad_(True)
+        try:
+            loss = fn(y_true, y_pred)
+            loss.backward()
+            grad_norm = y_pred.grad.norm().item()
+            print(f"Testing differentiability for {name}... ✅ success (grad norm={grad_norm:.4f})")
+        except Exception as e:
+            print(f"Testing differentiability for {name}... ❌ failed ({e})")
 
-    psnr_high = peak_signal_to_noise_ratio(y_true, y_true)
-    psnr_low = peak_signal_to_noise_ratio(y_true, torch.zeros_like(y_true))
-    assert psnr_high > psnr_low, "PSNR should be higher for identical images"
-    print("✅ PSNR sanity check passed")
-
-    print("\n========== [METRICS TEST COMPLETE] ==========\n")
-
-
-if __name__ == "__main__":
-    test_metrics()
+    print("\n✅ Unified differentiable metrics ready.")

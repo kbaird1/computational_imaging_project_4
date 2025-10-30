@@ -57,46 +57,31 @@ def get_loss_function(name):
     Retrieve differentiable loss function by name.
 
     All losses are sourced from src.metrics to ensure consistent computation
-    between training, validation, and testing. Non-differentiable metrics are
-    wrapped into torch tensors for safe backward compatibility.
+    between training, validation, and testing. Each loss is fully differentiable.
     """
 
     name = name.lower()
 
     if name == "mse":
-        return lambda y_pred, y_true: torch.tensor(
-            metrics.mean_squared_error(y_true, y_pred), device=y_pred.device, requires_grad=True
-        )
+        return lambda y_pred, y_true: metrics.mean_squared_error(y_true, y_pred)
 
     elif name in ["l1", "mae"]:
-        return lambda y_pred, y_true: torch.tensor(
-            metrics.mean_absolute_error(y_true, y_pred), device=y_pred.device, requires_grad=True
-        )
+        return lambda y_pred, y_true: metrics.mean_absolute_error(y_true, y_pred)
 
     elif name == "dssim":
-        return lambda y_pred, y_true: torch.tensor(
-            metrics.dssim(y_true, y_pred), device=y_pred.device, requires_grad=True
-        )
+        return lambda y_pred, y_true: metrics.dssim(y_true, y_pred)
 
     elif name == "gdl":
-        return lambda y_pred, y_true: torch.tensor(
-            metrics.gradient_difference_loss(y_true, y_pred), device=y_pred.device, requires_grad=True
-        )
+        return lambda y_pred, y_true: metrics.gradient_difference_loss(y_true, y_pred)
 
     elif name == "tv":
-        return lambda y_pred, y_true: torch.tensor(
-            metrics.total_variation(y_pred), device=y_pred.device, requires_grad=True
-        )
+        return lambda y_pred, y_true: metrics.total_variation(y_pred)
 
     elif name == "lpips":
-        return lambda y_pred, y_true: torch.tensor(
-            metrics.lpips_score(y_true, y_pred), device=y_pred.device, requires_grad=True
-        )
+        return lambda y_pred, y_true: metrics.lpips_score(y_true, y_pred)
 
     elif name == "ms_ssim":
-        return lambda y_pred, y_true: torch.tensor(
-            metrics.multi_scale_ssim(y_true, y_pred), device=y_pred.device, requires_grad=True
-        )
+        return lambda y_pred, y_true: metrics.multi_scale_ssim(y_true, y_pred)
 
     else:
         raise ValueError(f"Unsupported loss function: {name}")
@@ -119,6 +104,7 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device, scaler):
             with amp.autocast(device_type=device.type, dtype=torch.float16):
                 preds = model(X_batch)
                 loss = loss_fn(preds, Y_batch)
+            loss = loss.float()  # ensure numerical stability under AMP
         else:
             preds = model(X_batch)
             loss = loss_fn(preds, Y_batch)
@@ -154,6 +140,7 @@ def validate_one_epoch(model, loader, loss_fn, device, epoch, metrics_list):
                 with amp.autocast(device_type=device.type, dtype=torch.float16):
                     preds = model(X_batch)
                     loss = loss_fn(preds, Y_batch)
+                loss = loss.float()  # convert back to float32 for consistency
             else:
                 preds = model(X_batch)
                 loss = loss_fn(preds, Y_batch)
@@ -179,7 +166,6 @@ def validate_one_epoch(model, loader, loss_fn, device, epoch, metrics_list):
     avg_metrics = {k: metric_sums[k] / total_samples for k in metric_sums}
 
     return avg_loss, avg_metrics
-
 
 # ============================================================
 #  Main Training Function

@@ -362,15 +362,31 @@ def generate_training_report(output_path, config, history, test_metrics, log_fil
             "final_val_loss": float(history["val_loss"][-1]),
             "final_train_loss": float(history["train_loss"][-1]),
             "final_validation_metrics": {
-                k: float(v[-1]) for k, v in history["metrics"].items()
+                k: float(v[-1]) if isinstance(v[-1], (int, float, np.floating))
+                else float(v[-1].item()) if isinstance(v[-1], torch.Tensor)
+                else v[-1]
+                for k, v in history["metrics"].items()
             },
         },
         "test_summary": test_metrics,
     }
 
-    # Write to JSON
+    # --- Convert all tensors recursively before JSON dump ---
+    def _to_serializable(obj):
+        if isinstance(obj, torch.Tensor):
+            return obj.item()
+        elif isinstance(obj, dict):
+            return {k: _to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [_to_serializable(v) for v in obj]
+        else:
+            return obj
+
+    serializable_report = _to_serializable(report)
+
     with open(output_path, "w") as f:
-        json.dump(report, f, indent=4)
+        json.dump(serializable_report, f, indent=4)
 
     log_message(f"[report] Training report saved → {output_path}", log_file, console=True)
-    return report
+    return serializable_report
+

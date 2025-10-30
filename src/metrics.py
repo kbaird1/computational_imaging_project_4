@@ -80,8 +80,8 @@ def peak_signal_to_noise_ratio(y_true, y_pred, data_range=1.0):
 
 def structural_similarity_index(y_true, y_pred, data_range=1.0):
     """
-    Differentiable SSIM using PIQ (AMP-safe).
-    Forces float32 precision to avoid half<->float mismatches under autocast.
+    Differentiable SSIM using PIQ (AMP-safe, NaN-tolerant, float32-stable).
+    Clamps and sanitizes inputs to prevent invalid values.
     """
     if not isinstance(y_true, torch.Tensor):
         y_true = torch.tensor(y_true)
@@ -89,12 +89,18 @@ def structural_similarity_index(y_true, y_pred, data_range=1.0):
         y_pred = torch.tensor(y_pred)
 
     device = y_pred.device
-    # always cast to float32 so mixed-precision AMP won't break
+    # cast to float32 for stability under mixed precision
     y_true = y_true.to(device=device, dtype=torch.float32)
     y_pred = y_pred.to(device=device, dtype=torch.float32)
 
+    # clean and clamp for safety
+    y_true = torch.nan_to_num(y_true, nan=0.0, posinf=1.0, neginf=0.0)
+    y_pred = torch.nan_to_num(y_pred, nan=0.0, posinf=1.0, neginf=0.0)
+    y_true = torch.clamp(y_true, 0.0, 1.0)
+    y_pred = torch.clamp(y_pred, 0.0, 1.0)
+
     val = differentiable_ssim(y_pred, y_true, data_range=data_range)
-    return val.mean()  # keep as differentiable scalar
+    return val.mean() if isinstance(val, torch.Tensor) else val
 
 
 # ============================================================
@@ -102,10 +108,18 @@ def structural_similarity_index(y_true, y_pred, data_range=1.0):
 # ============================================================
 def dssim(y_true, y_pred, data_range=1.0):
     """
-    Differentiable DSSIM = (1 - SSIM) / 2
+    Differentiable DSSIM = (1 - SSIM) / 2, safe for training and mixing with other losses.
+    Automatically clamps and cleans NaN/inf values.
     """
+    # Clamp predictions and targets into valid range
+    y_true = torch.nan_to_num(y_true, nan=0.0, posinf=1.0, neginf=0.0)
+    y_pred = torch.nan_to_num(y_pred, nan=0.0, posinf=1.0, neginf=0.0)
+    y_true = torch.clamp(y_true, 0.0, 1.0)
+    y_pred = torch.clamp(y_pred, 0.0, 1.0)
+
     ssim_val = structural_similarity_index(y_true, y_pred, data_range=data_range)
-    return (1.0 - ssim_val) / 2.0
+    return (1 - ssim_val) / 2
+
 
 def gradient_difference_loss(y_true, y_pred):
     """Gradient Difference Loss (edge preservation)."""
